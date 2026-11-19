@@ -1,14 +1,22 @@
 import yfinance as yf
+import math
+
+def clean(value):
+    """Turn NaN/infinity into None so the rest of the app treats them as missing."""
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return None
+    return value
 
 def get_stock(ticker: str):
     stock = yf.Ticker(ticker.upper())
     info = stock.info                          # dict of company facts + ratios
     history = stock.history(period="2y")       # daily OHLCV prices
+    history = history.dropna(subset=["Close"])
     return info, history
 
 def get_metrics(info: dict) -> dict:
     """Pull the key valuation + size metrics. Missing values stay None."""
-    return {
+    raw = {
         "Price":           info.get("currentPrice") or info.get("regularMarketPrice"),
         "Market Cap":      info.get("marketCap"),
         "Trailing P/E":    info.get("trailingPE"),
@@ -22,7 +30,10 @@ def get_metrics(info: dict) -> dict:
         "Beta":            info.get("beta"),
         "52W High":        info.get("fiftyTwoWeekHigh"),
         "52W Low":         info.get("fiftyTwoWeekLow"),
+	"Sector":          info.get("sector"),
+        "Industry":        info.get("industry"),
     }
+    return {k: clean(v) for k, v in raw.items()}
 
 def get_overview(info: dict) -> dict:
     city, state, country = info.get("city"), info.get("state"), info.get("country")
@@ -94,15 +105,18 @@ def build_summary(info: dict, metrics: dict) -> str:
     return " ".join(lines)
 
 def get_analyst_view(info: dict) -> dict:
-    return {
+    raw = {
         "Consensus":    info.get("recommendationKey"),   # e.g. "buy", "hold"
         "Target Mean":  info.get("targetMeanPrice"),
         "Target Low":   info.get("targetLowPrice"),
         "Target High":  info.get("targetHighPrice"),
         "# Analysts":   info.get("numberOfAnalystOpinions"),
     }
+    return {k: clean(v) for k, v in raw.items()}
 
 def fmt(name: str, value):
+    if isinstance(value, str):
+        return value
     if value is None:
         return "N/A"
     if name == "Market Cap":
@@ -113,10 +127,9 @@ def fmt(name: str, value):
     if name in ("Profit Margin", "Revenue Growth"):
         return f"{value * 100:.1f}%"
     if name == "Dividend Yield":
-        # yfinance has returned this both as a decimal (0.005) and a percent (0.5)
         return f"{value:.2f}%" if value > 1 else f"{value * 100:.2f}%"
     if name in ("Price", "EPS (TTM)", "52W High", "52W Low"):
-        return f"${value:,.2f}"
+        return f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}"
     return f"{value:.2f}"
 
 if __name__ == "__main__":

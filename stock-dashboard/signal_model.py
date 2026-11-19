@@ -16,15 +16,16 @@ DEFAULT_PE = 20
 def clip(x):
     return float(np.clip(x, -1, 1))
 def score_valuation(metrics):
+    if metrics["Trailing P/E"] is None:
+        return None, "Not currently profitable, so P/E-based valuation is skipped."
     pe = metrics["Forward P/E"] or metrics["Trailing P/E"]
-    if pe is None or pe <= 0:
-        return None, "No usable P/E (likely unprofitable), so valuation is skipped."
+    if pe <= 0 or pe > 150:
+        return None, f"P/E of {pe:.0f} is too extreme to compare meaningfully."
     benchmark = SECTOR_PE.get(metrics.get("Sector"), DEFAULT_PE)
     ratio = pe / benchmark                       # 1.0 = in line with sector
     score = clip((1 - ratio) * 2)                # 50% cheaper -> +1, 50% pricier -> -1
     label = "below" if ratio < 1 else "above"
     return score, f"P/E of {pe:.1f} is {abs(1 - ratio):.0%} {label} the sector benchmark of {benchmark}."
-
 
 def score_quality(metrics):
     margin, growth = metrics["Profit Margin"], metrics["Revenue Growth"]

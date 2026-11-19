@@ -1,11 +1,29 @@
 import streamlit as st
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from data import get_stock, get_metrics, fmt, get_overview, build_summary, get_analyst_view
 from simulation import estimate_params, run_monte_carlo, summarize_simulation, choose_drift, fan_chart
 from signal_model import recommend
 
 st.set_page_config(page_title="Stock Analysis Dashboard", page_icon="📈", layout="wide")
+
+st.markdown("""
+<style>
+    .block-container { padding-top: 2rem; max-width: 1400px; }
+    div[data-testid="stMetric"] {
+        background: #161B22;
+        border: 1px solid #30363D;
+        border-radius: 12px;
+        padding: 14px 18px;
+        transition: border-color 0.2s, transform 0.2s;
+    }
+    div[data-testid="stMetric"]:hover { border-color: #4F8CFF; transform: translateY(-2px); }
+    div[data-testid="stMetricLabel"] p { font-size: 0.8rem; color: #8B949E; text-transform: uppercase; letter-spacing: 0.04em; }
+    div[data-testid="stMetricValue"] { font-size: 1.6rem; }
+    .stTabs [data-baseweb="tab"] { font-size: 1rem; padding: 10px 18px; }
+</style>
+""", unsafe_allow_html=True)
 
 
 # ---------- Data loading (cached) ----------
@@ -60,6 +78,43 @@ sim = summarize_simulation(paths)
 signal_paths = run_monte_carlo(price, choose_drift(mu, "risk_free"), sigma, days=63, n_sims=10_000, seed=0)
 result = recommend(metrics, history, summarize_simulation(signal_paths))
 
+from plotly.subplots import make_subplots
+
+CHART_LAYOUT = dict(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)", margin=dict(l=10, r=10, t=40, b=10))
+RATING_COLOR = {"BUY": "#2EA043", "HOLD": "#D29922", "SELL": "#F85149"}
+
+
+def signal_gauge(score, rating):
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number", value=score,
+        number={"valueformat": "+.2f", "font": {"size": 42}},
+        title={"text": f"<b>{rating}</b>", "font": {"size": 28, "color": RATING_COLOR[rating]}},
+        gauge={
+            "axis": {"range": [-1, 1], "tickvals": [-1, -0.25, 0.25, 1]},
+            "bar": {"color": RATING_COLOR[rating], "thickness": 0.3},
+            "steps": [
+                {"range": [-1, -0.25], "color": "rgba(248,81,73,0.25)"},
+                {"range": [-0.25, 0.25], "color": "rgba(210,153,34,0.25)"},
+                {"range": [0.25, 1], "color": "rgba(46,160,67,0.25)"},
+            ],
+        },
+    ))
+    fig.update_layout(**CHART_LAYOUT, height=260)
+    return fig
+
+
+def factor_chart(factors):
+    names = [n for n, f in factors.items() if f["score"] is not None]
+    scores = [factors[n]["score"] for n in names]
+    fig = go.Figure(go.Bar(
+        x=scores, y=names, orientation="h",
+        marker_color=["#2EA043" if s > 0 else "#F85149" for s in scores],
+        text=[f"{s:+.2f}" for s in scores], textposition="outside",
+        hovertext=[factors[n]["reason"] for n in names], hoverinfo="text",
+    ))
+    fig.update_layout(**CHART_LAYOUT, height=220, xaxis=dict(range=[-1.3, 1.3], zeroline=True))
+    return fig
 
 # ---------- Header ----------
 st.title(f"{overview['Name'] or ticker} ({ticker})")
@@ -94,16 +149,11 @@ with left:
 
 with right:
     st.subheader("Model Signal")
-    rating, score = result["Rating"], result["Score"]
-    box = {"BUY": st.success, "HOLD": st.warning, "SELL": st.error}[rating]
-    box(f"### {rating}  \nComposite score: **{score:+.2f}** (range −1 to +1)")
-
-    for name, f in result["Factors"].items():
-        if f["score"] is None:
-            st.caption(f"**{name}**: skipped. {f['reason']}")
-        else:
-            st.progress((f["score"] + 1) / 2, text=f"{name}: {f['score']:+.2f}")
-            st.caption(f["reason"])
+    st.plotly_chart(signal_gauge(result["Score"], result["Rating"]), use_container_width=True)
+    st.plotly_chart(factor_chart(result["Factors"]), use_container_width=True)
+    with st.expander("Why? Factor breakdown"):
+        for name, f in result["Factors"].items():
+            st.markdown(f"**{name}:** {f['reason']}")
 
     st.subheader("Analyst Consensus")
     a1, a2 = st.columns(2)
@@ -112,7 +162,6 @@ with right:
     if analyst["Target Mean"]:
         a2.metric("Mean Target", f"${analyst['Target Mean']:,.2f}",
                   f"{analyst['Target Mean'] / price - 1:+.1%} vs. price")
-
 st.divider()
 
 
